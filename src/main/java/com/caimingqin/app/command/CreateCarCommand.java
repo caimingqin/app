@@ -15,7 +15,7 @@ public class CreateCarCommand implements Command {
 	
 	@Override
 	public Object excute() {
-		Car car = new Car("createCar", "name");
+		Car car = new Car("createCar", "mmmm");
 		DomainEvent domainEvent = new DomainEvent("createCar", car);
 		System.out.println("=========================>excute() "+publisher);
 		publisher.publish(domainEvent);
