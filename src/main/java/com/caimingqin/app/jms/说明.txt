@@ -1,0 +1,488 @@
+
+activemq+spring 持久化发送消息
+博客分类： java
+ 
+ .
+
+
+	 最近的一个项目里，访问压力过大，需要异步处理一些不需要即使处理的请求。
+ 
+于是考虑用JMS，开始考察了几个jms服务，显示看了openJMS，实验了一下，发现他和spring的结合不是很好，而且只支持JMS 1.02，已经很长时间没有更新了，就不考虑使用了。
+ 
+后来转到了activemq。
+ 
+在网上找了好几天资料，最后整理一下，还算比较全面的，大家可以参考一下。
+ 
+1、先是下载activeMq。
+ 
+2、由于默认的activemq是日志文件的持久订阅，需要修改activemq的配置文件才能持久化到数据库里，在activemq的conf目录下的activemq.xml，找到
+ 
+ 
+ 
+
+
+Xml代码  
+1.<persistenceAdapter>  
+2.    <kahaDB directory="${activemq.base}/data/kahadb"/>  
+3.</persistenceAdapter>  
+ 
+ 
+ 
+ 把它注释掉换成
+ 
+ 
+ 
+
+
+Xml代码  
+1.<persistenceAdapter>  
+2.     <jdbcPersistenceAdapter dataSource="#oracle-ds"/>  
+3.</persistenceAdapter>  
+ 
+ 
+ 
+ 还要在activemq.xml的<bean></beans>里面增加数据库的配置，并且把oracle的驱动jar包，复制到activemq下的lib目录里，由于我使用的是oracle我的配置如下：
+ 
+ 
+ 
+ 
+ 
+
+
+Xml代码  
+1.<bean id="oracle-ds" class="org.apache.commons.dbcp.BasicDataSource" destroy-method="close">  
+2.<property name="driverClassName" value="oracle.jdbc.driver.OracleDriver"/>  
+3.<property name="url" value="jdbc:oracle:thin:@10.60.30.31:1521:orcl"/>  
+4.<property name="username" value="activemq"/>  
+5.<property name="password" value="activemq"/>  
+6.<property name="maxActive" value="200"/>  
+7.<property name="poolPreparedStatements" value="true"/>  
+8.;/bean>  
+ 
+ 
+ 
+ 到此你的activemq发送消息就可以持久化了（注：前提是你在spring里配置activemq时要配置消息的持久化）
+ 
+ 
+ 
+3、接下来是spring+activemq 使用的jar包，都在activemq目录下的lib里
+ 
+
+
+ 
+ 
+4、下来是具体一些配置文件和类文件
+ 
+ 
+ 
+发送消息类
+ 
+ 
+ 
+ 
+ 
+
+
+Java代码  
+1./** 
+2. * message sender 
+3. * @description <p></p> 
+4. * @author quzishen 
+5. * @project NormandyPositionII 
+6. * @class MessageSender.java 
+7. * @version 1.0 
+8. * @time 2011-1-11 
+9. */  
+10.public class MessageSender {  
+11.    // ~~~ jmsTemplate  
+12.    public JmsTemplate jmsTemplate;  
+13.      
+14.    /** 
+15.     * send message 
+16.     */  
+17.    public void sendMessage(){  
+18.        jmsTemplate.convertAndSend("hello jms!");  
+19.    }  
+20.    public void setJmsTemplate(JmsTemplate jmsTemplate) {  
+21.        this.jmsTemplate = jmsTemplate;  
+22.    }  
+23.}  
+   
+ 
+ 
+接收消息类
+ 
+ 
+ 
+ 
+ 
+
+
+Java代码  
+1./** 
+2. * message receiver 
+3. * @description <p></p> 
+4. * @author quzishen 
+5. * @project NormandyPositionII 
+6. * @class MessageReceiver.java 
+7. * @version 1.0 
+8. * @time 2011-1-11 
+9. */  
+10.public class MessageReceiver implements MessageListener {  
+11.    /* (non-Javadoc) 
+12.     * @see javax.jms.MessageListener#onMessage(javax.jms.Message) 
+13.     */  
+14.    public void onMessage(Message m) {  
+15.        System.out.println("[receive message]");  
+16.          
+17.        ObjectMessage om = (ObjectMessage) m;  
+18.        try {  
+19.            String key1 = om.getStringProperty("key1");  
+20.              
+21.            System.out.println(key1);  
+22.              
+23.            System.out.println("model:"+om.getJMSDeliveryMode());  
+24.            System.out.println("destination:"+om.getJMSDestination());  
+25.            System.out.println("type:"+om.getJMSType());  
+26.            System.out.println("messageId:"+om.getJMSMessageID());  
+27.            System.out.println("time:"+om.getJMSTimestamp());  
+28.            System.out.println("expiredTime:"+om.getJMSExpiration());  
+29.            System.out.println("priority:"+om.getJMSPriority());  
+30.        } catch (JMSException e) {  
+31.            e.printStackTrace();  
+32.        }  
+33.    }  
+34.}  
+ 
+ 
+ 
+ 
+ 
+在发送消息和接收消息前可以做一些自定的处理，就是这个类
+ 
+ 
+ 
+ 
+ 
+
+
+Java代码  
+1./** 
+2. * message converter 
+3. * @description <p></p> 
+4. * @author quzishen 
+5. * @project NormandyPositionII 
+6. * @class MessageConvertForSys.java 
+7. * @version 1.0 
+8. * @time 2011-1-11 
+9. */  
+10.public class MessageConvertForSys implements MessageConverter {  
+11.    /* (non-Javadoc) 
+12.     * @see org.springframework.jms.support.converter.MessageConverter#toMessage(java.lang.Object, javax.jms.Session) 
+13.     */  
+14.    public Message toMessage(Object object, Session session)  
+15.            throws JMSException, MessageConversionException {  
+16.        System.out.println("[toMessage]");  
+17.        ObjectMessage objectMessage = session.createObjectMessage();  
+18.          
+19.        objectMessage.setJMSExpiration(1000);  
+20.        objectMessage.setStringProperty("key1", object+"_add");  
+21.          
+22.        return objectMessage;  
+23.    }  
+24.    /* (non-Javadoc) 
+25.     * @see org.springframework.jms.support.converter.MessageConverter#fromMessage(javax.jms.Message) 
+26.     */  
+27.    public Object fromMessage(Message message) throws JMSException,  
+28.            MessageConversionException {  
+29.        System.out.println("[fromMessage]");  
+30.        ObjectMessage objectMessage = (ObjectMessage) message;  
+31.          
+32.        return objectMessage.getObjectProperty("key1");  
+33.    }  
+34.}  
+   
+ 
+ 
+第一种，PTP方式的配置：
+ 
+ 
+ 
+
+
+Java代码  
+1.<?xml version="1.0" encoding="UTF-8"?>  
+2.<beans xmlns="http://www.springframework.org/schema/beans"  
+3.    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:p="http://www.springframework.org/schema/p"  
+4.    xmlns:context="http://www.springframework.org/schema/context"  
+5.    xmlns:aop="http://www.springframework.org/schema/aop"  
+6.    xsi:schemaLocation="http://www.springframework.org/schema/beans   
+7.    http://www.springframework.org/schema/beans/spring-beans-2.5.xsd   
+8.    http://www.springframework.org/schema/context   
+9.    http://www.springframework.org/schema/context/spring-context-2.5.xsd "  
+10.    default-autowire="byName">  
+11.      
+12.    <!-- JMS PTP MODEL -->  
+13.    <!-- PTP链接工厂 -->  
+14.    <bean id="queueConnectionFactory" class="org.apache.activemq.spring.ActiveMQConnectionFactory">  
+15.        <property name="brokerURL" value="tcp://127.0.0.1:61616" />  
+16.        <!-- <property name="brokerURL" value="vm://normandy.notify" /> -->  
+17.        <property name="useAsyncSend" value="true" />  
+18.    </bean>  
+19.    <!-- 定义消息队列 -->  
+20.    <bean id="dest" class="org.apache.activemq.command.ActiveMQQueue">  
+21.        <constructor-arg value="queueDest" />  
+22.    </bean>  
+23.    <!-- PTP jms模板 -->  
+24.    <bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">  
+25.        <property name="connectionFactory" ref="queueConnectionFactory"></property>  
+26.        <property name="defaultDestination" ref="dest" />  
+27.        <property name="messageConverter" ref="messageConvertForSys" />  
+28.        <property name="pubSubDomain" value="false" />  
+29.    </bean>  
+30.      
+31.    <!-- 消息转换器 -->  
+32.    <bean id="messageConvertForSys" class="com.normandy.tech.test.MessageConvertForSys"></bean>  
+33.      
+34.    <!-- 消息发送方 -->  
+35.    <bean id="messageSender" class="com.normandy.tech.test.MessageSender"></bean>  
+36.    <!-- 消息接收方 -->  
+37.    <bean id="messageReceiver" class="com.normandy.tech.test.MessageReceiver"></bean>  
+38.      
+39.    <!-- 消息监听容器 -->  
+40.    <bean id="listenerContainer"    
+41.        class="org.springframework.jms.listener.DefaultMessageListenerContainer">    
+42.        <property name="connectionFactory" ref="queueConnectionFactory" />    
+43.        <property name="destination" ref="dest" />    
+44.        <property name="messageListener" ref="messageReceiver" />    
+45.    </bean>  
+46.</beans>  
+   
+ 
+ 
+ 
+ 
+第二种：PUB/SUB方式的配置
+ 
+我们配置两个消息订阅者，分别订阅不同的消息，这样用于判断是否成功执行了消息的发布和消息的订阅
+ 
+ 
+ 
+
+
+Java代码  
+1.<?xml version="1.0" encoding="UTF-8"?>  
+2.<beans xmlns="http://www.springframework.org/schema/beans"  
+3.    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:p="http://www.springframework.org/schema/p"  
+4.    xmlns:context="http://www.springframework.org/schema/context"  
+5.    xmlns:aop="http://www.springframework.org/schema/aop"  
+6.    xsi:schemaLocation="http://www.springframework.org/schema/beans   
+7.    http://www.springframework.org/schema/beans/spring-beans-2.5.xsd   
+8.    http://www.springframework.org/schema/context   
+9.    http://www.springframework.org/schema/context/spring-context-2.5.xsd "  
+10.    default-autowire="byName">  
+11.      
+12.    <!-- JMS TOPIC MODEL -->  
+13.    <!-- TOPIC链接工厂 -->  
+14.    <bean id="topicSendConnectionFactory" class="org.apache.activemq.spring.ActiveMQConnectionFactory">  
+15.        <property name="brokerURL" value="tcp://127.0.0.1:61616" />  
+16.        <property name="useAsyncSend" value="true" />  
+17.    </bean>  
+18.      
+19.    <bean id="topicListenConnectionFactory" class="org.apache.activemq.spring.ActiveMQConnectionFactory">  
+20.        <property name="brokerURL" value="tcp://127.0.0.1:61616" />  
+21.    </bean>  
+22.      
+23.    <!-- 定义主题 -->  
+24.    <bean id="myTopic"  class="org.apache.activemq.command.ActiveMQTopic">  
+25.      <constructor-arg value="normandy.topic"/>  
+26.    </bean>  
+27.      
+28.    <bean id="myTopic2"  class="org.apache.activemq.command.ActiveMQTopic">  
+29.      <constructor-arg value="normandy.topic2"/>  
+30.    </bean>  
+31.      
+32.    <!-- 消息转换器 -->  
+33.    <bean id="messageConvertForSys" class="com.normandy.tech.test.MessageConvertForSys"></bean>  
+34.      
+35.    <!-- TOPIC send jms模板 -->  
+36.    <bean id="topicSendJmsTemplate" class="org.springframework.jms.core.JmsTemplate">  
+37.        <property name="connectionFactory" ref="topicSendConnectionFactory"></property>  
+38.        <property name="defaultDestination" ref="myTopic" />  
+39.        <property name="messageConverter" ref="messageConvertForSys" />  
+40.        <!-- 开启订阅模式 -->  
+41.        <property name="pubSubDomain" value="true"/>  
+42.    </bean>  
+43.      
+44.    <!-- 消息发送方 -->  
+45.    <bean id="topicMessageSender" class="com.normandy.tech.test.MessageSender">  
+46.        <property name="jmsTemplate" ref="topicSendJmsTemplate"></property>  
+47.    </bean>  
+48.      
+49.    <!-- 消息接收方 -->  
+50.    <bean id="topicMessageReceiver" class="com.normandy.tech.test.MessageReceiver">  
+51.    </bean>  
+52.      
+53.    <!-- 主题消息监听容器 -->  
+54.    <bean id="listenerContainer"    
+55.        class="org.springframework.jms.listener.DefaultMessageListenerContainer">    
+56.        <property name="connectionFactory" ref="topicListenConnectionFactory" />    
+57.        <property name="pubSubDomain" value="true"/><!-- default is false -->  
+58.        <property name="destination" ref="myTopic" />  <!-- listen topic: myTopic -->  
+59.        <property name="subscriptionDurable" value="true"/>  
+60.        <property name="clientId" value="clientId_001"/><!---这里是设置接收客户端的ID，在持久化时，但这个客户端不在线时，消息就存在数据库里，知道被这个ID的客户端消费掉-->  
+61.        <property name="messageListener" ref="topicMessageReceiver" />    
+62.    </bean>  
+63.      
+64.    <!-- 主题消息监听容器2 -->  
+65.    <bean id="listenerContainer2"    
+66.        class="org.springframework.jms.listener.DefaultMessageListenerContainer">    
+67.        <property name="connectionFactory" ref="topicListenConnectionFactory" />    
+68.        <property name="pubSubDomain" value="true"/><!-- default is false -->  
+69.        <property name="destination" ref="myTopic2" />  <!-- listen topic: myTopic2 -->  
+70.        <property name="subscriptionDurable" value="true"/>  
+71.        <property name="clientId" value="clientId_002"/>!---这里是设置接收客户端的ID，在持久化时，但这个客户端不在线时，消息就存在数据库里，知道被这个ID的客户端消费掉-->  
+72.        <property name="messageListener" ref="topicMessageReceiver" />    
+73.    </bean>  
+74.</beans>  
+ 
+ 
+ 
+测试一下是否能发送和接收消息，我是在main方法里测试的
+ 
+ 
+ 
+
+
+Java代码  
+1.public static void main(String[] args) throws HttpException, IOException {  
+2.    System.out.println("初始化spring！准备开始接收！");  
+3.    ApplicationContext context = new ClassPathXmlApplicationContext("applicationContext-jms-topic-receiver.xml");  
+4.    MessageSender t=(MessageSender) context.getBean("topicMessageSender");  
+5.    t.sendMessage();  
+6.}  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Activemq支持两种消息传送模式：PERSISTENT （持久消息）和 NON_PERSISTENT（非持久消息）
+ 
+从字面意思就可以了解，这是两种正好相反的模式。
+ 
+1、PERSISTENT 持久消息
+ 
+是activemq默认的传送方式，此方式下的消息在配合activemq.xml中配置的消息存储方式，会被存储在特定的地方，直到有消费者将消息消费或者消息过期进入DLQ队列，消息生命周期才会结束。
+ 
+此模式下可以保证消息只会被成功传送一次和成功使用一次，消息具有可靠性。在消息传递到目标消费者，在消费者没有成功应答前，消息不会丢失。所以很自然的，需要一个地方来持久性存储。
+ 
+如果消息消费者在进行消费过程发生失败，则消息会被再次投递。
+ 
+
+
+
+2、NON_PERSISTENT 非持久消息
+ 
+非持久的消息适用于不重要的，可以接受消息丢失的哪一类消息，这种消息只会被投递一次，消息不会在持久性存储中存储，也不会保证消息丢失后的重新投递。
+ 
+
+
+
+
+
+
+在spring提供的JmsTemplate中，同样提供了针对于当前功能的配置选项：
+ 
+ 
+ 
+
+
+Xml代码  
+1.<bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">  
+2.        <property name="connectionFactory" ref="cachingConnectionFactory"></property>  
+3.        <property name="defaultDestination" ref="dest" />  
+4.        <property name="messageConverter" ref="messageConverter" />  
+5.        <property name="pubSubDomain" value="false" />  
+6.        <property name="explicitQosEnabled" value="true" /> <!-- deliveryMode, priority, timeToLive 的开关，要生效，必须配置为true，默认false-->  
+7.        <property name="deliveryMode" value="1" /> <!-- 发送模式  DeliveryMode.NON_PERSISTENT=1:非持久 ; DeliveryMode.PERSISTENT=2:持久-->  
+8.    </bean>  
+   
+ 
+ 
+消息的签收模式：
+ 
+
+
+客户端成功接收一条消息的标志是一条消息被签收，成功应答。
+ 
+消息的签收情形分两种：
+ 
+1、带事务的session
+ 
+ 如果session带有事务，并且事务成功提交，则消息被自动签收。如果事务回滚，则消息会被再次传送。
+ 
+2、不带事务的session
+ 
+ 不带事务的session的签收方式，取决于session的配置。
+ 
+Activemq支持一下三种模式：
+ 
+  Session.AUTO_ACKNOWLEDGE  消息自动签收
+  Session.CLIENT_ACKNOWLEDGE  客户端调用acknowledge方法手动签收
+  Session.DUPS_OK_ACKNOWLEDGE 不必必须签收，消息可能会重复发送。在第二次重新传递消息的时候，消息头的JmsDelivered会被置为true标示当前消息已经传送过一次，客户端需要进行消息的重复处理控制。
+ 
+spring提供的JmsTemplate中的配置方式：
+ 
+ 
+ 
+ 
+ 
+
+
+Xml代码  
+1.<!-- PTP jms模板 -->  
+2.    <bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">  
+3.        <property name="connectionFactory" ref="cachingConnectionFactory"></property>  
+4.        <property name="defaultDestination" ref="dest" />  
+5.        <property name="messageConverter" ref="messageConverter" />  
+6.        <property name="pubSubDomain" value="false" />  
+7.        <property name="sessionAcknowledgeMode" value="1" />   
+8.<!-- 消息应答方式  
+9.        Session.AUTO_ACKNOWLEDGE  消息自动签收  
+10.        Session.CLIENT_ACKNOWLEDGE  客户端调用acknowledge方法手动签收  
+11.        Session.DUPS_OK_ACKNOWLEDGE 不必必须签收，消息可能会重复发送  
+12.        -->  
+13.    </bean>  
+   
+ 
+ 
+最后补充一下，在复制代码的时候，就是xml代码，一定要保证你项目的其他spring的xml的命名空间和你复制的新建的xml（我的新建spring配置activemq的名是：applicationContext-jms-topic.xml）命名空间保持一致，不然会出问题。我就在这挣扎了两天。希望大家注意。
+ 
+就是这个地方：
+ 
+ 
+ 
+ 
+ 
+
+
+Xml代码  
+1.<?xml version="1.0" encoding="UTF-8"?>  
+2.<beans xmlns="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"  
+3.       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-2.0.xsd">  
+   
+ 
+ 
+ 
+ 
+以上资料来自：
+ 
+http://blog.csdn.net/quzishen/article/details/6128781
+ 
+http://blog.csdn.net/quzishen/article/details/6131222
